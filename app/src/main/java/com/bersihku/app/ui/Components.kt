@@ -50,6 +50,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -366,4 +372,108 @@ fun EmptyState(icon: ImageVector, title: String, text: String, modifier: Modifie
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+/** Satu tombol di bar bawah (ikon + tulisan). */
+class BarAction(
+    val label: String,
+    val icon: ImageVector,
+    val danger: Boolean = false,
+    val onClick: () -> Unit,
+)
+
+/** Bar bawah untuk file yang dipilih: jumlah + tombol Pindahkan / Ganti nama / Hapus. */
+@Composable
+fun FileActionBar(count: Int, bytes: Long, onClear: () -> Unit, actions: List<BarAction>) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 3.dp) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+        ) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "${formatCount(count)} dipilih • ${formatSize(bytes)}",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = onClear) { Text("Batal") }
+            }
+            Row(Modifier.fillMaxWidth()) {
+                for (a in actions) {
+                    val color = if (a.danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                    Column(
+                        Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable(onClick = a.onClick)
+                            .padding(vertical = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Icon(a.icon, contentDescription = null, tint = color)
+                        Spacer(Modifier.height(2.dp))
+                        Text(a.label, style = MaterialTheme.typography.labelMedium, color = color)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Kotak isian nama (folder baru / ganti nama).
+ * [onConfirm] mengembalikan pesan kesalahan, atau null kalau berhasil.
+ */
+@Composable
+fun NameDialog(
+    title: String,
+    initial: String,
+    confirmText: String,
+    selectWholeName: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> String?,
+) {
+    val selEnd = if (selectWholeName) initial.length else initial.substringBeforeLast('.', initial).length
+    var value by remember { mutableStateOf(TextFieldValue(initial, TextRange(0, selEnd))) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val focus = remember { FocusRequester() }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = {
+                        value = it
+                        error = null
+                    },
+                    singleLine = true,
+                    isError = error != null,
+                    placeholder = { Text("Ketik nama…") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(focus),
+                )
+                val e = error
+                if (e != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(e, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+                LaunchedEffect(Unit) {
+                    runCatching { focus.requestFocus() }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { error = onConfirm(value.text) }) { Text(confirmText) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Batal") } },
+    )
 }

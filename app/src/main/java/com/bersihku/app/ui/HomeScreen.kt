@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.CleaningServices
+import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
@@ -69,6 +70,7 @@ import com.bersihku.app.data.Keys
 import com.bersihku.app.data.Perms
 import com.bersihku.app.data.ScanProgress
 import com.bersihku.app.data.ScanResult
+import com.bersihku.app.data.Storage
 import com.bersihku.app.data.StorageInfo
 import com.bersihku.app.data.Trash
 import com.bersihku.app.data.formatAgo
@@ -137,6 +139,16 @@ fun HomeScreen(vm: MainViewModel) {
         }
 
         item { SectionTitle("Lainnya", null) }
+        if (vm.hasFileAccess) {
+            item {
+                NavCard(
+                    Icons.Filled.DriveFileMove,
+                    AmberSoft,
+                    "Atur file & folder",
+                    "Buat folder baru, pindahkan file, ganti nama, dan rapikan folder yang berantakan.",
+                ) { vm.open(Screen.Folder(r?.root ?: Storage.root.absolutePath)) }
+            }
+        }
         item {
             NavCard(
                 Icons.Filled.Apps,
@@ -676,7 +688,7 @@ private fun TrashCard(items: List<Trash.Item>, onOpen: () -> Unit, onEmpty: () -
 @Composable
 private fun Footer() {
     Text(
-        "BersihKu 1.0 • dibuat oleh Pahlevi Lubis",
+        "BersihKu 1.1 • dibuat oleh Pahlevi Lubis",
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         textAlign = TextAlign.Center,

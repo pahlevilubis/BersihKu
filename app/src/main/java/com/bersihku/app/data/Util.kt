@@ -7,6 +7,7 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -174,5 +175,27 @@ fun openFile(ctx: Context, path: String, nameForType: String = path) {
         Toast.makeText(ctx, "Tidak ada aplikasi untuk membuka file ini", Toast.LENGTH_SHORT).show()
     } catch (e: Exception) {
         Toast.makeText(ctx, "File tidak bisa dibuka", Toast.LENGTH_SHORT).show()
+    }
+}
+
+/** Nama file/folder yang belum dipakai, contoh: "foto (1).jpg". */
+fun uniqueFile(f: File): File {
+    if (!f.exists()) return f
+    val base = if (f.isDirectory) f.name else f.nameWithoutExtension
+    val ext = if (f.isDirectory) "" else f.extension
+    var i = 1
+    while (true) {
+        val c = File(f.parentFile, if (ext.isEmpty()) "$base ($i)" else "$base ($i).$ext")
+        if (!c.exists()) return c
+        i++
+    }
+}
+
+/** Beri tahu Galeri bahwa file berubah (dihapus / dipindah / dikembalikan). */
+fun scanMedia(ctx: Context, paths: List<String>) {
+    if (paths.isEmpty()) return
+    try {
+        MediaScannerConnection.scanFile(ctx.applicationContext, paths.take(500).toTypedArray(), null, null)
+    } catch (_: Exception) {
     }
 }

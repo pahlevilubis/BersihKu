@@ -18,6 +18,10 @@ jalan juga di HP Android 10 ke atas). Semua pemeriksaan dilakukan di HP sendiri 
   - **File Telegram**, **File besar (50 MB+)**, **Screenshot & rekaman layar**, **Download lama (> 3 bulan)**
 - **Bersihkan Sekarang** — sekali tekan untuk semua yang aman.
 - **Folder paling besar** — jelajahi folder dari yang paling besar, lengkap dengan persentasenya.
+- **Atur file & folder** *(baru di 1.1)* — buat folder baru, **pindahkan** file/folder (pilih tujuan, bisa sambil
+  buat folder baru), **ganti nama**, dan **Rapikan otomatis**: file yang berserakan di satu folder (misalnya Download)
+  dikelompokkan ke sub-folder Foto, Video, Dokumen, Installer APK, dll. File dari daftar WhatsApp, File besar, dll
+  juga bisa langsung dipindah.
 - **Aplikasi jarang dipakai** — daftar aplikasi yang lama tidak dibuka + ukurannya; hapus beberapa sekaligus,
   atau ketuk ⚙ untuk hapus cache lewat Pengaturan.
 - **Tempat Sampah BersihKu** — file foto/video/dokumen yang dihapus disimpan dulu 7 hari, bisa dikembalikan.

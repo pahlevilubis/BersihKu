@@ -20,6 +20,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AssistChip
@@ -130,27 +132,35 @@ fun FileListScreen(vm: MainViewModel, key: String) {
             )
         },
         bottomBar = {
-            if (selection.isNotEmpty()) {
-                BottomActionBar(selectedFiles.size, selectedBytes) {
-                    DangerButton("Hapus") {
-                        if (isDup) {
-                            // Pengaman: tiap grup minimal 1 file tetap disimpan
-                            val fixed = selection.toMutableSet()
-                            var adjusted = false
-                            for (g in cat.dupGroups) {
-                                if (g.all { it.path in fixed }) {
-                                    fixed.remove(g[0].path)
-                                    adjusted = true
+            if (selectedFiles.isNotEmpty()) {
+                FileActionBar(
+                    count = selectedFiles.size,
+                    bytes = selectedBytes,
+                    onClear = { vm.setSelection(selKey, emptySet()) },
+                    actions = listOf(
+                        BarAction("Pindahkan", Icons.Filled.DriveFileMove) {
+                            vm.startMove(selKey, selectedFiles.map { Trash.Target(it.path, it.size, false) })
+                        },
+                        BarAction("Hapus", Icons.Filled.Delete, danger = true) {
+                            if (isDup) {
+                                // Pengaman: tiap grup minimal 1 file tetap disimpan
+                                val fixed = selection.toMutableSet()
+                                var adjusted = false
+                                for (g in cat.dupGroups) {
+                                    if (g.all { it.path in fixed }) {
+                                        fixed.remove(g[0].path)
+                                        adjusted = true
+                                    }
+                                }
+                                if (adjusted) {
+                                    vm.setSelection(selKey, fixed)
+                                    vm.toast("1 salinan dari tiap file tetap disimpan.")
                                 }
                             }
-                            if (adjusted) {
-                                vm.setSelection(selKey, fixed)
-                                vm.toast("1 salinan dari tiap file tetap disimpan.")
-                            }
-                        }
-                        confirm = true
-                    }
-                }
+                            confirm = true
+                        },
+                    ),
+                )
             }
         },
         containerColor = MaterialTheme.colorScheme.background,

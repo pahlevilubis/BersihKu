@@ -1,7 +1,6 @@
 package com.bersihku.app.data
 
 import android.content.Context
-import android.media.MediaScannerConnection
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -110,7 +109,7 @@ object Trash {
             }
         }
         save(items)
-        notifyMedia(ctx, donePaths)
+        scanMedia(ctx, donePaths)
         return Outcome(donePaths, doneDirs, bytes, failed)
     }
 
@@ -130,7 +129,7 @@ object Trash {
                 failed++
             }
         }
-        notifyMedia(ctx, donePaths)
+        scanMedia(ctx, donePaths)
         return Outcome(donePaths, doneDirs, bytes, failed)
     }
 
@@ -143,7 +142,7 @@ object Trash {
             val item = iter.next()
             if (item.id !in ids) continue
             var target = File(item.original)
-            if (target.exists()) target = uniqueName(target)
+            if (target.exists()) target = uniqueFile(target)
             target.parentFile?.mkdirs()
             if (item.file.renameTo(target)) {
                 iter.remove()
@@ -151,7 +150,7 @@ object Trash {
             }
         }
         save(items)
-        notifyMedia(ctx, restored)
+        scanMedia(ctx, restored)
         return restored.size
     }
 
@@ -190,24 +189,5 @@ object Trash {
     fun purgeOld() {
         val old = load().filter { it.daysLeft <= 0 }.map { it.id }.toSet()
         if (old.isNotEmpty()) deleteForever(old)
-    }
-
-    private fun uniqueName(f: File): File {
-        val base = f.nameWithoutExtension
-        val ext = f.extension
-        var i = 1
-        while (true) {
-            val c = File(f.parentFile, if (ext.isEmpty()) "$base ($i)" else "$base ($i).$ext")
-            if (!c.exists()) return c
-            i++
-        }
-    }
-
-    private fun notifyMedia(ctx: Context, paths: List<String>) {
-        if (paths.isEmpty()) return
-        try {
-            MediaScannerConnection.scanFile(ctx.applicationContext, paths.take(500).toTypedArray(), null, null)
-        } catch (_: Exception) {
-        }
     }
 }

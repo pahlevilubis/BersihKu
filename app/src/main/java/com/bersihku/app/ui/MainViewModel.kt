@@ -12,6 +12,8 @@ import com.bersihku.app.data.Apps
 import com.bersihku.app.data.Category
 import com.bersihku.app.data.FileType
 import com.bersihku.app.data.Keys
+import com.bersihku.app.data.Moved
+import com.bersihku.app.data.Organizer
 import com.bersihku.app.data.Perms
 import com.bersihku.app.data.Safety
 import com.bersihku.app.data.ScanProgress
@@ -27,6 +29,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 sealed interface Screen {
     data object Home : Screen
@@ -34,6 +37,7 @@ sealed interface Screen {
     data class Folder(val path: String) : Screen
     data object AppList : Screen
     data object TrashBin : Screen
+    data object MovePicker : Screen
 }
 
 class UiMessage(val text: String, val actionLabel: String? = null, val action: (() -> Unit)? = null)
@@ -70,6 +74,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var message by mutableStateOf<UiMessage?>(null)
         private set
+
+    /** Naik setiap ada perubahan file (hapus/pindah/buat folder) supaya daftar folder dimuat ulang. */
+    var fsVersion by mutableStateOf(0)
+        private set
+
+    /** File/folder yang sedang dipilih tujuan pindahnya. */
+    var pendingMove by mutableStateOf<List<Trash.Target>>(emptyList())
+        private set
+    private var pendingSelKey: String? = null
 
     /** Pilihan (centang) per layar. */
     val selections = mutableStateMapOf<String, Set<String>>()
@@ -195,6 +208,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val s = selections[k] ?: continue
                 if (s.any { it in done }) selections[k] = s.filterTo(HashSet()) { it !in done }
             }
+            fsVersion++
             storage = Storage.read(ctx)
             refreshTrash()
             busy = null
@@ -208,6 +222,93 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         "Memori lega setelah dikosongkan.",
                     "Kosongkan",
                 ) { emptyTrash() }
+            }
+        }
+    }
+
+    // ---------------- Atur file: pindah, folder baru, ganti nama, rapikan ----------------
+
+    fun startMove(selKey: String?, targets: List<Trash.Target>) {
+        if (targets.isEmpty()) return
+        pendingMove = targets
+        pendingSelKey = selKey
+        open(Screen.MovePicker)
+    }
+
+    fun cancelMove() {
+        pendingMove = emptyList()
+        pendingSelKey = null
+        back()
+    }
+
+    fun moveTo(dest: String) {
+        val targets = pendingMove
+        if (targets.isEmpty()) {
+            back()
+            return
+        }
+        viewModelScope.launch {
+            busy = "Memindahkan ${formatCount(targets.size)} item…"
+            val out = withContext(Dispatchers.IO) { Organizer.move(ctx, targets, dest) }
+            afterMoves(out.moves)
+            pendingSelKey?.let { selections[it] = emptySet() }
+            pendingMove = emptyList()
+            pendingSelKey = null
+            busy = null
+            if (screen == Screen.MovePicker) back()
+            val name = if (dest == Storage.root.absolutePath) "Memori HP" else dest.substringAfterLast('/')
+            val n = out.moves.size
+            val failNote = if (out.failed > 0) " (${formatCount(out.failed)} gagal)" else ""
+            message = when {
+                n == 0 && out.skipped > 0 -> UiMessage("File-nya memang sudah ada di folder $name.")
+                n == 0 -> UiMessage("Gagal memindahkan. File mungkin sedang dipakai aplikasi lain.")
+                else -> UiMessage("${formatCount(n)} item dipindah ke folder $name.$failNote", "Buka") {
+                    open(Screen.Folder(dest))
+                }
+            }
+        }
+    }
+
+    private suspend fun afterMoves(moves: List<Moved>) {
+        if (moves.isNotEmpty()) {
+            val r = result
+            if (r != null) result = withContext(Dispatchers.Default) { r.relocate(moves) }
+        }
+        fsVersion++
+    }
+
+    /** Buat folder baru. Mengembalikan pesan kesalahan, atau null kalau berhasil. */
+    fun createFolder(parent: String, name: String, onCreated: (String) -> Unit = {}): String? {
+        val r = Organizer.createFolder(parent, name)
+        val path = r.getOrNull() ?: return r.exceptionOrNull()?.message ?: "Folder gagal dibuat"
+        fsVersion++
+        onCreated(path)
+        return null
+    }
+
+    /** Ganti nama. Mengembalikan pesan kesalahan, atau null kalau berhasil. */
+    fun rename(selKey: String?, path: String, isDir: Boolean, size: Long, newName: String): String? {
+        val r = Organizer.rename(ctx, path, isDir, size, newName)
+        val m = r.getOrNull() ?: return r.exceptionOrNull()?.message ?: "Gagal mengganti nama"
+        if (selKey != null) selections[selKey] = emptySet()
+        viewModelScope.launch { afterMoves(listOf(m)) }
+        message = UiMessage("Nama diganti menjadi \"${m.to.substringAfterLast('/')}\".")
+        return null
+    }
+
+    fun tidy(folder: String, plan: List<Pair<String, List<File>>>) {
+        if (plan.isEmpty()) return
+        viewModelScope.launch {
+            busy = "Merapikan folder…"
+            val out = withContext(Dispatchers.IO) { Organizer.tidy(ctx, folder, plan) }
+            afterMoves(out.moves)
+            selections[selFolderKey(folder)] = emptySet()
+            busy = null
+            val failNote = if (out.failed > 0) " (${formatCount(out.failed)} gagal)" else ""
+            message = if (out.moves.isEmpty()) {
+                UiMessage("Tidak ada file yang dipindah.$failNote")
+            } else {
+                UiMessage("Rapi! ${formatCount(out.moves.size)} file dikelompokkan ke ${plan.size} folder.$failNote")
             }
         }
     }
@@ -230,6 +331,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             busy = "Mengembalikan file…"
             val n = withContext(Dispatchers.IO) { Trash.restore(ctx, ids) }
+            fsVersion++
             selections[SEL_TRASH] = emptySet()
             refreshTrash()
             storage = Storage.read(ctx)

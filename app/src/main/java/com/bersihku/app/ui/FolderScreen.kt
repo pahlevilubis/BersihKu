@@ -18,15 +18,29 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DriveFileMove
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material3.Checkbox
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -42,10 +56,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.bersihku.app.data.FileType
 import com.bersihku.app.data.Guard
+import com.bersihku.app.data.Organizer
 import com.bersihku.app.data.Scanner
 import com.bersihku.app.data.Storage
 import com.bersihku.app.data.Trash
 import com.bersihku.app.data.formatAgo
+import com.bersihku.app.data.formatCount
 import com.bersihku.app.data.formatSize
 import com.bersihku.app.data.openFile
 import kotlinx.coroutines.Dispatchers
@@ -57,11 +73,22 @@ private class Entry(
     val name: String,
     val isDir: Boolean,
     val size: Long,
+    /** false = ukuran folder belum diketahui (belum diperiksa) → tampilkan jumlah isinya. */
+    val sizeKnown: Boolean,
+    val itemCount: Int,
     val modified: Long,
     val type: FileType,
     val selectable: Boolean,
     val note: String?,
 )
+
+private class FolderData(val entries: List<Entry>, val tidyPlan: List<Pair<String, List<File>>>)
+
+private enum class FolderSort(val label: String) {
+    UKURAN("Paling besar dulu"),
+    NAMA("Nama (A–Z)"),
+    BARU("Paling baru dulu"),
+}
 
 private fun listEntries(root: String, path: String, sizes: Map<String, Long>?): List<Entry> {
     val children = File(path).listFiles() ?: return emptyList()
@@ -73,11 +100,14 @@ private fun listEntries(root: String, path: String, sizes: Map<String, Long>?): 
             if (f.isDirectory) {
                 val rel = p.removePrefix(root).lowercase()
                 val locked = rel == "/android/data" || rel == "/android/obb"
+                val known = sizes?.get(p)
                 Entry(
                     path = p,
                     name = f.name,
                     isDir = true,
-                    size = sizes?.get(p) ?: 0L,
+                    size = known ?: 0L,
+                    sizeKnown = known != null,
+                    itemCount = if (known == null) (f.list()?.size ?: -1) else -1,
                     modified = f.lastModified(),
                     type = FileType.LAINNYA,
                     selectable = !locked && !Guard.isProtectedDir(root, p),
@@ -89,6 +119,8 @@ private fun listEntries(root: String, path: String, sizes: Map<String, Long>?): 
                     name = f.name,
                     isDir = false,
                     size = f.length(),
+                    sizeKnown = true,
+                    itemCount = -1,
                     modified = f.lastModified(),
                     type = Scanner.typeOf(f.name),
                     selectable = !Guard.isProtectedFile(root, p),
@@ -96,7 +128,6 @@ private fun listEntries(root: String, path: String, sizes: Map<String, Long>?): 
                 )
             }
         }
-        .sortedByDescending { it.size }
 }
 
 @Composable
@@ -106,15 +137,34 @@ fun FolderScreen(vm: MainViewModel, path: String) {
     val root = r?.root ?: Storage.root.absolutePath
     val selKey = selFolderKey(path)
     val selection = vm.selectionOf(selKey)
-    var confirm by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    var newFolder by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf<Entry?>(null) }
+    var confirmTidy by remember { mutableStateOf(false) }
+    var sortMenu by remember { mutableStateOf(false) }
+    var sort by remember(path) { mutableStateOf(if (r != null) FolderSort.UKURAN else FolderSort.NAMA) }
 
-    val entries by produceState<List<Entry>?>(null, path, r) {
-        value = withContext(Dispatchers.IO) { listEntries(root, path, r?.dirSizes) }
+    val data by produceState<FolderData?>(null, path, r, vm.fsVersion) {
+        value = withContext(Dispatchers.IO) {
+            FolderData(listEntries(root, path, r?.dirSizes), Organizer.tidyPlan(root, path))
+        }
     }
-    val list = entries
-    val folderSize = r?.dirSizes?.get(path) ?: list?.sumOf { it.size } ?: 0L
+    val d = data
+    val list = remember(d, sort) {
+        val entries = d?.entries
+        when {
+            entries == null -> null
+            sort == FolderSort.UKURAN -> entries.sortedWith(
+                compareByDescending<Entry> { it.size }.thenBy { it.name.lowercase() }
+            )
+            sort == FolderSort.NAMA -> entries.sortedWith(compareBy<Entry>({ !it.isDir }, { it.name.lowercase() }))
+            else -> entries.sortedByDescending { it.modified }
+        }
+    }
+    val folderSize = r?.dirSizes?.get(path) ?: d?.entries?.sumOf { it.size } ?: 0L
     val selected = remember(list, selection) { list?.filter { it.path in selection } ?: emptyList() }
-    val title = if (path == root) "Semua folder" else path.substringAfterLast('/')
+    val title = if (path == root) "Memori HP" else path.substringAfterLast('/')
+    val tidyCount = d?.tidyPlan?.sumOf { it.second.size } ?: 0
 
     Scaffold(
         topBar = {
@@ -122,13 +172,51 @@ fun FolderScreen(vm: MainViewModel, path: String) {
                 title = title,
                 subtitle = "${formatSize(folderSize)} • ${path.removePrefix(root).ifEmpty { "/" }}",
                 onBack = { vm.back() },
+                actions = {
+                    IconButton(onClick = { newFolder = true }) {
+                        Icon(Icons.Filled.CreateNewFolder, contentDescription = "Folder baru")
+                    }
+                    IconButton(onClick = { sortMenu = true }) {
+                        Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "Urutkan")
+                    }
+                    DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
+                        for (s in FolderSort.entries) {
+                            DropdownMenuItem(
+                                text = { Text(s.label) },
+                                onClick = {
+                                    sort = s
+                                    sortMenu = false
+                                },
+                                leadingIcon = if (s == sort) {
+                                    { Icon(Icons.Filled.CheckCircle, null, tint = Mint) }
+                                } else {
+                                    null
+                                },
+                            )
+                        }
+                    }
+                },
             )
         },
         bottomBar = {
             if (selected.isNotEmpty()) {
-                BottomActionBar(selected.size, selected.sumOf { it.size }) {
-                    DangerButton("Hapus") { confirm = true }
+                val actions = buildList {
+                    add(
+                        BarAction("Pindahkan", Icons.Filled.DriveFileMove) {
+                            vm.startMove(selKey, selected.map { Trash.Target(it.path, it.size, it.isDir) })
+                        }
+                    )
+                    if (selected.size == 1) {
+                        add(BarAction("Ganti nama", Icons.Filled.Edit) { renaming = selected[0] })
+                    }
+                    add(BarAction("Hapus", Icons.Filled.Delete, danger = true) { confirmDelete = true })
                 }
+                FileActionBar(
+                    count = selected.size,
+                    bytes = selected.sumOf { it.size },
+                    onClear = { vm.setSelection(selKey, emptySet()) },
+                    actions = actions,
+                )
             }
         },
         containerColor = MaterialTheme.colorScheme.background,
@@ -149,11 +237,14 @@ fun FolderScreen(vm: MainViewModel, path: String) {
             if (path == root) {
                 item {
                     InfoBanner(
-                        "Ketuk folder untuk membukanya. Centang file atau folder yang mau dihapus. " +
-                            "Folder utama (DCIM, Download, Android, dll) dan cadangan chat dilindungi.",
+                        "Ketuk folder untuk membukanya. Centang file/folder untuk dipindah, diganti nama, atau dihapus. " +
+                            "Tombol 📁+ di atas untuk membuat folder baru. Folder utama (DCIM, Download, Android, dll) dilindungi.",
                         null,
                     )
                 }
+            }
+            if (tidyCount >= 3) {
+                item { TidyCard(tidyCount, d?.tidyPlan ?: emptyList()) { confirmTidy = true } }
             }
             if (list.isEmpty()) {
                 item {
@@ -181,16 +272,109 @@ fun FolderScreen(vm: MainViewModel, path: String) {
         }
     }
 
-    if (confirm) {
+    if (confirmDelete) {
         val targets = remember(selected) { selected.map { Trash.Target(it.path, it.size, it.isDir) } }
         DeleteDialog(
             count = targets.size,
             bytes = targets.sumOf { it.size },
             permanentOnly = false,
-            onDismiss = { confirm = false },
+            onDismiss = { confirmDelete = false },
         ) { permanent ->
-            confirm = false
+            confirmDelete = false
             vm.delete(targets, permanent)
+        }
+    }
+
+    if (newFolder) {
+        NameDialog(
+            title = "Folder baru",
+            initial = "",
+            confirmText = "Buat",
+            selectWholeName = true,
+            onDismiss = { newFolder = false },
+        ) { name ->
+            val err = vm.createFolder(path, name)
+            if (err == null) newFolder = false
+            err
+        }
+    }
+
+    renaming?.let { e ->
+        NameDialog(
+            title = if (e.isDir) "Ganti nama folder" else "Ganti nama file",
+            initial = e.name,
+            confirmText = "Simpan",
+            selectWholeName = e.isDir,
+            onDismiss = { renaming = null },
+        ) { name ->
+            val err = vm.rename(selKey, e.path, e.isDir, e.size, name)
+            if (err == null) renaming = null
+            err
+        }
+    }
+
+    if (confirmTidy) {
+        val plan = d?.tidyPlan ?: emptyList()
+        AlertDialog(
+            onDismissRequest = { confirmTidy = false },
+            icon = { Icon(Icons.Filled.AutoAwesome, null, tint = Mint) },
+            title = { Text("Rapikan folder ini?") },
+            text = {
+                Column {
+                    Text("File akan dikelompokkan ke sub-folder sesuai jenisnya:")
+                    Spacer(Modifier.height(8.dp))
+                    for ((sub, files) in plan) {
+                        Text(
+                            "• ${formatCount(files.size)} file → folder \"$sub\"",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Hanya file yang ada langsung di folder ini. Sub-folder yang sudah ada tidak diubah, " +
+                            "dan tidak ada file yang dihapus.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    confirmTidy = false
+                    vm.tidy(path, plan)
+                }) { Text("Rapikan") }
+            },
+            dismissButton = { TextButton(onClick = { confirmTidy = false }) { Text("Batal") } },
+        )
+    }
+}
+
+@Composable
+private fun TidyCard(count: Int, plan: List<Pair<String, List<File>>>, onTidy: () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.primaryContainer,
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.AutoAwesome, null, tint = Mint)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Rapikan otomatis", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "${formatCount(count)} file bisa dikelompokkan: " +
+                        plan.joinToString(", ") { "${it.first} (${it.second.size})" },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Button(onClick = onTidy) { Text("Rapikan") }
         }
     }
 }
@@ -235,13 +419,18 @@ private fun EntryRow(
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(e.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            val pct = if (parentSize > 0L) (e.size * 100 / parentSize).toInt() else 0
-            Text(
-                e.note ?: buildString {
+            val pct = if (parentSize > 0L && e.sizeKnown) (e.size * 100 / parentSize).toInt() else 0
+            val info = e.note ?: buildString {
+                if (e.isDir && !e.sizeKnown) {
+                    append(if (e.itemCount >= 0) "${formatCount(e.itemCount)} item" else "folder")
+                } else {
                     append(formatSize(e.size))
                     if (pct > 0) append(" • $pct%")
-                    if (!e.isDir) append(" • ${formatAgo(e.modified)}")
-                },
+                }
+                if (!e.isDir) append(" • ${formatAgo(e.modified)}")
+            }
+            Text(
+                info,
                 style = MaterialTheme.typography.bodySmall,
                 fontWeight = if (e.note == null) FontWeight.SemiBold else FontWeight.Normal,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

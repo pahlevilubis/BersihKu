@@ -67,7 +67,23 @@ data class Category(
             preselected = preselected.filterTo(HashSet()) { !gone(it) },
         )
     }
+
+    /** Ganti lokasi file yang sudah dipindah (map mengembalikan null kalau file tidak dipindah). */
+    fun remap(map: (String) -> String?): Category {
+        fun moved(f: ScannedFile): ScannedFile {
+            val n = map(f.path) ?: return f
+            return ScannedFile(n, f.size, f.modified, f.type)
+        }
+        return copy(
+            files = files.map { moved(it) },
+            preselected = preselected.mapTo(HashSet()) { map(it) ?: it },
+            dupGroups = dupGroups.map { g -> g.map { moved(it) } },
+        )
+    }
 }
+
+/** Satu file/folder yang berhasil dipindah. */
+data class Moved(val from: String, val to: String, val isDir: Boolean, val size: Long)
 
 class ScanResult(
     val root: String,
@@ -106,6 +122,59 @@ class ScanResult(
             categories = categories.map { it.without(::gone) },
             finishedAt = finishedAt,
         )
+    }
+
+    /** Hasil baru setelah file/folder dipindah ke tempat lain. */
+    fun relocate(moves: List<Moved>): ScanResult {
+        if (moves.isEmpty()) return this
+        val sizes = HashMap(dirSizes)
+        fun addUp(start: String, delta: Long) {
+            var d = start
+            while (d.length >= root.length) {
+                sizes[d] = ((sizes[d] ?: 0L) + delta).coerceAtLeast(0L)
+                if (d == root || !d.contains('/')) break
+                d = d.substringBeforeLast('/')
+            }
+        }
+
+        val fileMap = HashMap<String, String>()
+        val dirMap = ArrayList<Pair<String, String>>()
+        for (m in moves) {
+            val size = if (m.isDir) (sizes[m.from] ?: m.size) else m.size
+            addUp(m.from.substringBeforeLast('/'), -size)
+            addUp(m.to.substringBeforeLast('/'), size)
+            if (m.isDir) {
+                val inside = sizes.keys.filter { it == m.from || it.startsWith(m.from + "/") }
+                for (k in inside) {
+                    val v = sizes.remove(k) ?: 0L
+                    sizes[m.to + k.removePrefix(m.from)] = v
+                }
+                dirMap.add(m.from to m.to)
+            } else {
+                fileMap[m.from] = m.to
+            }
+        }
+
+        fun newPath(p: String): String? {
+            fileMap[p]?.let { return it }
+            for ((from, to) in dirMap) {
+                if (p.startsWith("$from/")) return to + p.removePrefix(from)
+            }
+            return null
+        }
+
+        val files = allFiles.map { f ->
+            val n = newPath(f.path)
+            if (n == null) f else ScannedFile(n, f.size, f.modified, f.type)
+        }
+        // Kategori yang berdasarkan lokasi (WhatsApp, Download, dll): file yang sudah dipindah dikeluarkan
+        val byLocation = setOf(
+            Keys.SAMPAH, Keys.SAMPAH_GALERI, Keys.WHATSAPP, Keys.TELEGRAM, Keys.SCREENSHOT, Keys.DOWNLOAD,
+        )
+        val cats = categories.map { c ->
+            if (c.key in byLocation) c.without { newPath(it) != null } else c.remap { newPath(it) }
+        }
+        return ScanResult(root, files, sizes, cats, finishedAt)
     }
 }
 

@@ -52,6 +52,7 @@ fun BersihKuRoot(vm: MainViewModel = viewModel()) {
             is Screen.Folder -> FolderScreen(vm, s.path)
             Screen.AppList -> AppsScreen(vm)
             Screen.TrashBin -> TrashScreen(vm)
+            Screen.MovePicker -> MovePickerScreen(vm)
         }
         SnackbarHost(
             snackbar,
